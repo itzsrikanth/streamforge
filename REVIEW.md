@@ -51,15 +51,65 @@ Teach and grade these along the way — not as a separate course.
 |------|--------|
 | Boundaries | Package/module seams; what is public vs internal? |
 | Domain types | Tick/signal as types vs raw `Map`/`JsonNode` everywhere? |
+| Wire vs domain | Exchange/API DTO separate from domain? Or one type doing both jobs? |
+| Normalize | Wire fields mapped to stable names/types (`symbol`, `price`, `eventTime`, `ingestTime`)? |
 | Invariants | What must never happen (dup signal, negative price persist)? Where enforced? |
 | Concurrency | Shared mutable state? Happens-before? Shutdown/interrupt? |
 | APIs | Request/response shapes stable? Errors typed? Idempotency key? |
 | Persistence | Schema, indexes, uniqueness for dedupe, migration story? |
 | Extension points | New `TickSource` without rewriting processor? |
 | Tests | One test that fails on the bug class they claim to fix? |
-| Naming | Does the name match the responsibility? |
+| Naming | Does the name match the responsibility? (`Tick` ≠ Binance JSON shape) |
 
 LLD finding format: **smell → concrete risk → decision you must make** (not a patch dump).
+
+---
+
+## Wire vs domain (“normalize”)
+
+**Normalize** = turn an exchange-specific payload into **our** stable event. Not “pretty-print JSON.”
+
+| Layer | Owns | Example names |
+|-------|------|----------------|
+| **Wire / DTO** | Binance (or other) field names & JSON shape | `BinanceTradeEvent`, `TradeWire` — **not** `Tick` |
+| **Domain** | Streamforge vocabulary + invariants | `Tick` (`symbol`, `price`, `qty?`, `eventTime`, `ingestTime`) |
+| **Mapper / parser** | DTO/`JsonNode` → `Optional<Tick>` (or fail closed) | Single place; not inside `main` forever |
+
+**Block this smell:** renaming the wire DTO to `Tick` and calling Stage 0 normalize “done.” That deletes the anti-corruption boundary.
+
+**Price/qty types:** prefer `BigDecimal` (or validated decimal string parsed once). `double` for money-like values is a design bug — call it out.
+
+**Bad price (default Stage 0 reject set)** — do not build/persist a `Tick` when:
+
+- `price` null / blank / whitespace  
+- non-numeric / `BigDecimal` parse failure  
+- `price ≤ 0`  
+
+Optional early: missing/blank `symbol`.  
+Usually **not** “bad” at Stage 0: tiny qty (dust), large but finite prices, maker/taker flags.
+
+Invariant to demand out loud: *“No Tick exists with non-positive or unparsable price.”* Ask where it is enforced (ctor/factory vs hope vs DB only).
+
+---
+
+## Code quality / Java practice (review bar)
+
+Grade these when they ask for code-quality or architecture review. Still **no silent rewrite**.
+
+| Area | Probe |
+|------|--------|
+| SRP / god `main` | Does `App` only wire, or also parse, validate, and (later) persist? |
+| Package shape | `domain` / `wire`|`binance` / `ingest` / `persist` emerging, or one anonymous blob? |
+| Constants | URL, limits → `private static final` (or config)? Magic locals in `main`? |
+| Shared `ObjectMapper` | One reused mapper (static final / injected) vs `new` per message? |
+| Immutability | Domain `Tick` as `record` / finals? Wire DTO may be mutable for Jackson — own the choice |
+| Dead code / deps | Unused buffers, unused libraries (e.g. WS lib while on JDK `HttpClient`) |
+| WS framing | `last` / reassembly handled, or explicit deferral that single-frame is assumed? |
+| Failure policy | Bad JSON / bad price: drop+log vs crash the process? Named decision? |
+| Shutdown | Latch/`await` without `sendClose` → owned probe behavior or leak? |
+| Naming | `M`, `IncomingMessage`, `parsed` — do names teach the design or hide it? |
+
+Smell → risk → **decision** (same LLD format). Style nits that don’t affect stage Done-when → mention once or skip.
 
 ---
 
