@@ -41,7 +41,8 @@ public class BinanceSocket {
                     }
                 } else {
                     System.out.println("Received 10 callbacks");
-                    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "");
+                    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "")
+                            .whenComplete((ok, err) -> socketClosed.countDown());
                 }
                 textCallbacks++;
                 return CompletableFuture.completedFuture(null);
